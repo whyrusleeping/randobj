@@ -1,13 +1,16 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"net/http"
-	"os"
 
 	"github.com/jbenet/go-ipfs/core"
 	"github.com/jbenet/go-ipfs/core/coreunix"
+	"github.com/jbenet/go-ipfs/importer"
+	"github.com/jbenet/go-ipfs/importer/chunk"
 	"github.com/jbenet/go-ipfs/repo/fsrepo"
+	uio "github.com/jbenet/go-ipfs/unixfs/io"
 	u "github.com/jbenet/go-ipfs/util"
 
 	"code.google.com/p/go.net/context"
@@ -27,11 +30,39 @@ func ServeIpfsRand(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func ServeRandDir(w http.ResponseWriter, r *http.Request) {
+	db := uio.NewDirectory(gnode.DAG)
+	for i := 0; i < 50; i++ {
+		read := io.LimitReader(u.NewTimeSeededRand(), 512)
+		nd, err := importer.BuildDagFromReader(read, gnode.DAG, nil, chunk.DefaultSplitter)
+		if err != nil {
+			panic(err)
+		}
+		k, err := gnode.DAG.Add(nd)
+		if err != nil {
+			panic(err)
+		}
+
+		err = db.AddChild(fmt.Sprint(i), k)
+		if err != nil {
+			panic(err)
+		}
+	}
+
+	nd := db.GetNode()
+	k, err := gnode.DAG.Add(nd)
+	if err != nil {
+		w.WriteHeader(504)
+		w.Write([]byte(err.Error()))
+	} else {
+		w.Write([]byte(k.B58String()))
+	}
+}
+
 func main() {
 	builder := core.NewNodeBuilder().Online()
 
-	home := os.Getenv("HOME")
-	r := fsrepo.At(home + "/.go-ipfs")
+	r := fsrepo.At("~/.go-ipfs")
 	if err := r.Open(); err != nil {
 		panic(err)
 	}
@@ -47,6 +78,7 @@ func main() {
 	gnode = node
 
 	http.HandleFunc("/ipfsobject", ServeIpfsRand)
+	http.HandleFunc("/ipfsdir", ServeRandDir)
 	http.ListenAndServe(":8080", nil)
 	cancel()
 }
